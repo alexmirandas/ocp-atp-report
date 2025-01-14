@@ -85,8 +85,10 @@ def generar_reporte(reporte, nombre_cluster):
     nombre_archivo = f"{nombre_cluster}_reporte_{timestamp}.txt"
     with open(nombre_archivo, 'w') as f:
         for titulo, contenido in reporte:
-            f.write(f"{titulo}:
-{contenido}\n\n")
+            #f.write(f"{titulo}:
+            f.write(f"{titulo}:\n{contenido}\n\n")
+
+#{contenido}\n\n")
     print(f"Reporte generado: {nombre_archivo}")
 
 # Ejecución principal
