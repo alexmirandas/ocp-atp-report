@@ -64,15 +64,33 @@ def verificar_recursos_nodos(nodos):
     return resultados
 
 # Verificar conectividad entre nodos
+# def verificar_conectividad_nodos(nodos):
+#     resultados = []
+#     for nodo in nodos:
+#         for otro_nodo in nodos:
+#             if nodo != otro_nodo:
+#                 comando = f"oc debug node/{nodo} -- chroot /host ping -c 1 {otro_nodo}"
+#                 resultado = ejecutar_comando(comando)
+#                 resultados.append((f"{nodo} -> {otro_nodo}", resultado))
+#     return resultados
 def verificar_conectividad_nodos(nodos):
     resultados = []
-    for nodo in nodos:
-        for otro_nodo in nodos:
-            if nodo != otro_nodo:
-                comando = f"oc debug node/{nodo} -- chroot /host ping -c 1 {otro_nodo}"
-                resultado = ejecutar_comando(comando)
-                resultados.append((f"{nodo} -> {otro_nodo}", resultado))
+
+    # Identificar nodos maestros y workers
+    nodos_master = [nodo for nodo in nodos if "master" in nodo]
+    nodos_worker = [
+        nodo for nodo in nodos if any(keyword in nodo for keyword in ["node", "infra", "3scale", "odf"])
+    ]
+
+    # Probar conectividad desde maestros a workers
+    for master in nodos_master:
+        for worker in nodos_worker:
+            comando = f"oc debug node/{master} -- chroot /host ping -c 1 {worker}"
+            resultado = ejecutar_comando(comando)
+            resultados.append((f"{master} -> {worker}", resultado))
+    
     return resultados
+
 
 # Verificar almacenamiento
 def verificar_almacenamiento():
