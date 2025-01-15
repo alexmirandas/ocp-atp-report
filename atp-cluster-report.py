@@ -64,32 +64,34 @@ def verificar_recursos_nodos(nodos):
     return resultados
 
 # Verificar conectividad entre nodos
-# def verificar_conectividad_nodos(nodos):
-#     resultados = []
-#     for nodo in nodos:
-#         for otro_nodo in nodos:
-#             if nodo != otro_nodo:
-#                 comando = f"oc debug node/{nodo} -- chroot /host ping -c 1 {otro_nodo}"
-#                 resultado = ejecutar_comando(comando)
-#                 resultados.append((f"{nodo} -> {otro_nodo}", resultado))
-#     return resultados
 def verificar_conectividad_nodos(nodos):
-    resultados = []
-
     # Identificar nodos maestros y workers
     nodos_master = [nodo for nodo in nodos if "master" in nodo]
     nodos_worker = [
         nodo for nodo in nodos if any(keyword in nodo for keyword in ["node", "infra", "3scale", "odf"])
     ]
 
+    resultados = {}
+
     # Probar conectividad desde maestros a workers
     for master in nodos_master:
+        resultados[master] = []  # Inicializar lista de resultados para cada maestro
         for worker in nodos_worker:
             comando = f"oc debug node/{master} -- chroot /host ping -c 1 {worker}"
             resultado = ejecutar_comando(comando)
-            resultados.append((f"{master} -> {worker}", resultado))
+            estado = "Exitoso" if "1 received" in resultado else "Fallido"
+            resultados[master].append((worker, estado))
     
-    return resultados
+    # Formatear reporte para mayor claridad
+    reporte = []
+    for master, workers in resultados.items():
+        reporte.append(f"Nodo Maestro: {master}")
+        for worker, estado in workers:
+            reporte.append(f"  - {worker}: {estado}")
+        reporte.append("")  # Línea en blanco para separar secciones
+    
+    return "\n".join(reporte)
+
 
 
 # Verificar almacenamiento
