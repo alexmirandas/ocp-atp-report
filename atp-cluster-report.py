@@ -2,6 +2,9 @@ import subprocess
 import datetime
 from tabulate import tabulate
 
+# Lista para rastrear recursos temporales creados
+recursos_temporales = []
+
 # Función para ejecutar comandos en shell
 def ejecutar_comando(comando):
     try:
@@ -9,6 +12,19 @@ def ejecutar_comando(comando):
         return resultado.stdout.strip()
     except subprocess.CalledProcessError as e:
         return f"Error ejecutando {comando}: {e.stderr.strip()}"
+
+# Registrar recursos temporales
+def registrar_recurso(recurso):
+    recursos_temporales.append(recurso)
+
+# Limpiar recursos temporales
+def limpiar_recursos():
+    print("Limpieza de recursos temporales...")
+    for recurso in recursos_temporales:
+        comando = f"oc delete {recurso} --ignore-not-found"
+        resultado = ejecutar_comando(comando)
+        print(f"Limpieza de {recurso}: {resultado}")
+    recursos_temporales.clear()
 
 # Obtener información general del clúster
 def obtener_info_cluster():
@@ -49,7 +65,10 @@ def obtener_nodos():
 def verificar_mtu(nodos):
     resultados = []
     for nodo in nodos:
-        comando_mtu = f"oc debug node/{nodo} -- chroot /host cat /sys/class/net/ens192/mtu"
+        comando_debug = f"oc debug node/{nodo}"
+        pod_debug = ejecutar_comando(comando_debug)
+        registrar_recurso(f"pod/{pod_debug.split()[1]}")  # Registrar el pod temporal
+        comando_mtu = f"oc exec -it {pod_debug.split()[1]} -- chroot /host cat /sys/class/net/ens192/mtu"
         resultado_mtu = ejecutar_comando(comando_mtu)
         resultados.append((nodo, f"MTU: {resultado_mtu}" if "Error" not in resultado_mtu else f"Error verificando MTU: {resultado_mtu}"))
     return resultados
@@ -65,34 +84,25 @@ def verificar_recursos_nodos(nodos):
 
 # Verificar conectividad entre nodos
 def verificar_conectividad_nodos(nodos):
-    # Identificar nodos maestros y workers
     nodos_master = [nodo for nodo in nodos if "master" in nodo]
     nodos_worker = [
         nodo for nodo in nodos if any(keyword in nodo for keyword in ["node", "infra", "3scale", "odf"])
     ]
-
-    resultados = {}
+    resultados = []
 
     # Probar conectividad desde maestros a workers
     for master in nodos_master:
-        resultados[master] = []  # Inicializar lista de resultados para cada maestro
         for worker in nodos_worker:
             comando = f"oc debug node/{master} -- chroot /host ping -c 1 {worker}"
             resultado = ejecutar_comando(comando)
             estado = "Exitoso" if "1 received" in resultado else "Fallido"
-            resultados[master].append((worker, estado))
-    
-    # Formatear reporte para mayor claridad
-    reporte = []
-    for master, workers in resultados.items():
-        reporte.append(f"Nodo Maestro: {master}")
-        for worker, estado in workers:
-            reporte.append(f"  - {worker}: {estado}")
-        reporte.append("")  # Línea en blanco para separar secciones
-    
-    return "\n".join(reporte)
+            resultados.append((f"{master} -> {worker}", estado))
 
+    # Formatear reporte tabulado
+    headers = ["Conexión", "Estado"]
+    reporte = tabulate(resultados, headers=headers, tablefmt="pretty")
 
+    return reporte
 
 # Verificar almacenamiento
 def verificar_almacenamiento():
@@ -104,31 +114,31 @@ def generar_reporte(reporte, nombre_cluster):
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     nombre_archivo = f"{nombre_cluster}_reporte_{timestamp}.txt"
     with open(nombre_archivo, 'w') as f:
-        for titulo, contenido in reporte:
-            #f.write(f"{titulo}:
+        for titulo, contenido en reporte:
             f.write(f"{titulo}:\n{contenido}\n\n")
-
-#{contenido}\n\n")
     print(f"Reporte generado: {nombre_archivo}")
 
 # Ejecución principal
 def main():
-    reporte = []
-    nodos = obtener_nodos()
+    try:
+        reporte = []
+        nodos = obtener_nodos()
 
-    # Información general del clúster
-    reporte.extend(obtener_info_cluster())
+        # Información general del clúster
+        reporte.extend(obtener_info_cluster())
 
-    # Estado del clúster
-    reporte.append(("Estado de CEPH", tabulate(verificar_ceph(), headers=["Componente", "Estado"], tablefmt="pretty")))
-    reporte.append(("MTU", tabulate(verificar_mtu(nodos), headers=["Nodo", "Resultado"], tablefmt="pretty")))
-    reporte.append(("Recursos de Nodos", tabulate(verificar_recursos_nodos(nodos), headers=["Nodo", "Recursos"], tablefmt="pretty")))
-    reporte.append(("Conectividad entre nodos", tabulate(verificar_conectividad_nodos(nodos), headers=["Nodos", "Resultado"], tablefmt="pretty")))
-    reporte.append(("Almacenamiento", tabulate(verificar_almacenamiento(), headers=["Componente", "Estado"], tablefmt="pretty")))
+        # Estado del clúster
+        reporte.append(("Estado de CEPH", tabulate(verificar_ceph(), headers=["Componente", "Estado"], tablefmt="pretty")))
+        reporte.append(("MTU", tabulate(verificar_mtu(nodos), headers=["Nodo", "Resultado"], tablefmt="pretty")))
+        reporte.append(("Recursos de Nodos", tabulate(verificar_recursos_nodos(nodos), headers=["Nodo", "Recursos"], tablefmt="pretty")))
+        reporte.append(("Conectividad entre nodos", verificar_conectividad_nodos(nodos)))
+        reporte.append(("Almacenamiento", tabulate(verificar_almacenamiento(), headers=["Componente", "Estado"], tablefmt="pretty")))
 
-    # Generar reporte
-    nombre_cluster = ejecutar_comando("oc get infrastructure cluster -o jsonpath='{.status.infrastructureName}'")
-    generar_reporte(reporte, nombre_cluster)
+        # Generar reporte
+        nombre_cluster = ejecutar_comando("oc get infrastructure cluster -o jsonpath='{.status.infrastructureName}'")
+        generar_reporte(reporte, nombre_cluster)
+    finally:
+        limpiar_recursos()  # Asegurar limpieza de recursos temporales al final
 
 if __name__ == "__main__":
     main()
