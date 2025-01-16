@@ -64,14 +64,19 @@ def obtener_nodos():
 # Verificar el MTU en todos los nodos
 def verificar_mtu(nodos):
     resultados = []
+    usuario_ssh = "core"  # Cambia esto según sea necesario
+
     for nodo in nodos:
-        comando_debug = f"oc debug node/{nodo}"
-        pod_debug = ejecutar_comando(comando_debug)
-        registrar_recurso(f"pod/{pod_debug.split()[1]}")  # Registrar el pod temporal
-        comando_mtu = f"oc exec -it {pod_debug.split()[1]} -- chroot /host cat /sys/class/net/ens192/mtu"
-        resultado_mtu = ejecutar_comando(comando_mtu)
-        resultados.append((nodo, f"MTU: {resultado_mtu}" if "Error" not in resultado_mtu else f"Error verificando MTU: {resultado_mtu}"))
+        # Comando SSH con opción para deshabilitar el chequeo estricto de claves
+        comando_ssh = f"ssh -o StrictHostKeyChecking=no {usuario_ssh}@{nodo} cat /sys/class/net/ens192/mtu"
+        resultado_mtu = ejecutar_comando(comando_ssh)
+        if "Error" in resultado_mtu or "Permission denied" in resultado_mtu:
+            resultados.append((nodo, f"Error verificando MTU: {resultado_mtu}"))
+        else:
+            resultados.append((nodo, f"MTU: {resultado_mtu}"))
+    
     return resultados
+
 
 # Verificar recursos usando 'oc adm top'
 def verificar_recursos_nodos(nodos):
@@ -114,7 +119,7 @@ def generar_reporte(reporte, nombre_cluster):
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     nombre_archivo = f"{nombre_cluster}_reporte_{timestamp}.txt"
     with open(nombre_archivo, 'w') as f:
-        for titulo, contenido en reporte:
+        for titulo, contenido in reporte:
             f.write(f"{titulo}:\n{contenido}\n\n")
     print(f"Reporte generado: {nombre_archivo}")
 
@@ -125,13 +130,32 @@ def main():
         nodos = obtener_nodos()
 
         # Información general del clúster
+        reporte.append(("Command", "oc get infrastructure cluster -o jsonpath='{.status.infrastructureName}'"))
         reporte.extend(obtener_info_cluster())
 
         # Estado del clúster
+        comando_ceph = (
+            "oc exec -it <rook-ceph-operator-pod> -n openshift-storage -- "
+            "ceph -s --cluster=openshift-storage "
+            "--conf=/var/lib/rook/openshift-storage/openshift-storage.config "
+            "--keyring=/var/lib/rook/openshift-storage/client.admin.keyring"
+        )
+        reporte.append(("Command", comando_ceph))
         reporte.append(("Estado de CEPH", tabulate(verificar_ceph(), headers=["Componente", "Estado"], tablefmt="pretty")))
+
+        comando_mtu = "ssh -o StrictHostKeyChecking=no core@<nodo> cat /sys/class/net/ens192/mtu"
+        reporte.append(("Command", comando_mtu))
         reporte.append(("MTU", tabulate(verificar_mtu(nodos), headers=["Nodo", "Resultado"], tablefmt="pretty")))
+
+        comando_recursos = "oc adm top node <nodo>"
+        reporte.append(("Command", comando_recursos))
         reporte.append(("Recursos de Nodos", tabulate(verificar_recursos_nodos(nodos), headers=["Nodo", "Recursos"], tablefmt="pretty")))
+
+        reporte.append(("Command", "oc debug node/<master> -- chroot /host ping -c 1 <worker>"))
         reporte.append(("Conectividad entre nodos", verificar_conectividad_nodos(nodos)))
+
+        comando_almacenamiento = "df -hT"
+        reporte.append(("Command", comando_almacenamiento))
         reporte.append(("Almacenamiento", tabulate(verificar_almacenamiento(), headers=["Componente", "Estado"], tablefmt="pretty")))
 
         # Generar reporte
